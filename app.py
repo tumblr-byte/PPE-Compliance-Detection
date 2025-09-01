@@ -41,7 +41,7 @@ def process_image(model, image):
     filtered_results = filter_highest_confidence_per_class(results[0])
     
     # Get annotated image with filtered results
-    annotated_img = plot_filtered_results(img_array, filtered_results, model.names)
+    annotated_img = plot_filtered_results(img_array, filtered_results, model.names, is_video=False)
     
     return annotated_img, filtered_results
 
@@ -68,9 +68,23 @@ def filter_highest_confidence_per_class(results):
     filtered_boxes = [det['box'] for det in class_detections.values()]
     return filtered_boxes
 
-def plot_filtered_results(image, filtered_boxes, class_names):
-    """Plot filtered results on image"""
+def plot_filtered_results(image, filtered_boxes, class_names, is_video=False):
+    """Plot filtered results on image with enhanced visibility for video"""
     img_copy = image.copy()
+    
+    # Set different parameters for video vs image
+    if is_video:
+        # Enhanced visibility for video
+        box_thickness = 4
+        font_scale = 1.0
+        font_thickness = 3
+        label_padding = 15
+    else:
+        # Normal settings for image
+        box_thickness = 2
+        font_scale = 0.6
+        font_thickness = 2
+        label_padding = 10
     
     for box in filtered_boxes:
         # Get box coordinates
@@ -78,14 +92,32 @@ def plot_filtered_results(image, filtered_boxes, class_names):
         class_id = int(box.cls[0])
         confidence = float(box.conf[0])
         
-        # Draw bounding box
-        cv2.rectangle(img_copy, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        # Draw bounding box with enhanced thickness for video
+        cv2.rectangle(img_copy, (x1, y1), (x2, y2), (0, 255, 0), box_thickness)
         
-        # Draw label
+        # Draw label with larger font for video
         label = f"{class_names[class_id]}: {confidence:.2f}"
-        label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-        cv2.rectangle(img_copy, (x1, y1 - label_size[1] - 10), (x1 + label_size[0], y1), (0, 255, 0), -1)
-        cv2.putText(img_copy, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)[0]
+        
+        # Background rectangle for label
+        cv2.rectangle(
+            img_copy, 
+            (x1, y1 - label_size[1] - label_padding), 
+            (x1 + label_size[0] + 10, y1), 
+            (0, 255, 0), 
+            -1
+        )
+        
+        # Text label
+        cv2.putText(
+            img_copy, 
+            label, 
+            (x1 + 5, y1 - 5), 
+            cv2.FONT_HERSHEY_SIMPLEX, 
+            font_scale, 
+            (0, 0, 0), 
+            font_thickness
+        )
     
     return img_copy
 
@@ -117,8 +149,8 @@ def process_video(model, video_path, progress_bar, status_text):
         # Filter to highest confidence per class
         filtered_boxes = filter_highest_confidence_per_class(results[0])
         
-        # Plot filtered results
-        annotated_frame = plot_filtered_results(frame, filtered_boxes, model.names)
+        # Plot filtered results with enhanced visibility for video
+        annotated_frame = plot_filtered_results(frame, filtered_boxes, model.names, is_video=True)
         
         # Write frame to output
         out.write(annotated_frame)
@@ -205,7 +237,7 @@ def main():
             
             # Display original video
             st.subheader("Original Video")
-            st.video(uploaded_video)
+            st.video(uploaded_video, width=400)
             
             # Process video button
             if st.button("Process Video for PPE Detection"):
@@ -218,7 +250,7 @@ def main():
                 
                 # Display processed video
                 st.subheader("PPE Detection Results")
-                st.video(output_path)
+                st.video(output_path, width=400)
                 
                 # Download button
                 with open(output_path, 'rb') as f:
@@ -247,8 +279,8 @@ def main():
             
             # Display settings
             st.subheader("Display Settings")
-            display_width = 640
-            display_height = 480
+            display_width = 400
+            display_height = 300
             st.write(f"Resolution: {display_width} x {display_height}")
         
         with col2:
@@ -287,13 +319,13 @@ def main():
                         # Filter to highest confidence per class
                         filtered_boxes = filter_highest_confidence_per_class(results[0])
                         
-                        # Plot filtered results
-                        annotated_frame = plot_filtered_results(frame, filtered_boxes, model.names)
+                        # Plot filtered results with enhanced visibility for live video
+                        annotated_frame = plot_filtered_results(frame, filtered_boxes, model.names, is_video=True)
                         
                         # Convert BGR to RGB for display
                         annotated_frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
                         
-                        # Display frame
+                        # Display frame with fixed size
                         video_placeholder.image(
                             annotated_frame_rgb,
                             channels="RGB",
@@ -315,7 +347,7 @@ def main():
                             
                             status_placeholder.success(f"PPE Detected: {', '.join(current_detections)}")
                         else:
-                            status_placeholder.warning("No PPE equipment detected (threshold: 0.5)")
+                            status_placeholder.warning("No PPE equipment detected")
                         
                         # Small delay to prevent overwhelming
                         time.sleep(0.1)
@@ -327,15 +359,6 @@ def main():
                     cap.release()
                     video_placeholder.empty()
                     status_placeholder.info("Live detection stopped")
-    
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Detection Settings")
-    st.sidebar.info(
-        "Confidence Threshold: 0.5\n"
-        "- Only detections above 50% confidence\n"
-        "- One bounding box per class (highest confidence)\n"
-        "- Reduces duplicate detections"
-    )
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("About PPE Detection")
