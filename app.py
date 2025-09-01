@@ -34,13 +34,60 @@ def process_image(model, image):
     # Convert PIL image to numpy array
     img_array = np.array(image)
     
-    # Run inference
-    results = model(img_array)
+    # Run inference with confidence threshold and NMS
+    results = model(img_array, conf=0.5, iou=0.5)
     
-    # Get annotated image
-    annotated_img = results[0].plot()
+    # Filter to keep only highest confidence per class
+    filtered_results = filter_highest_confidence_per_class(results[0])
     
-    return annotated_img, results[0]
+    # Get annotated image with filtered results
+    annotated_img = plot_filtered_results(img_array, filtered_results, model.names)
+    
+    return annotated_img, filtered_results
+
+def filter_highest_confidence_per_class(results):
+    """Filter results to keep only highest confidence detection per class"""
+    if len(results.boxes) == 0:
+        return results
+    
+    # Group detections by class
+    class_detections = {}
+    
+    for i, box in enumerate(results.boxes):
+        class_id = int(box.cls[0])
+        confidence = float(box.conf[0])
+        
+        if class_id not in class_detections or confidence > class_detections[class_id]['confidence']:
+            class_detections[class_id] = {
+                'box_idx': i,
+                'confidence': confidence,
+                'box': box
+            }
+    
+    # Create filtered results
+    filtered_boxes = [det['box'] for det in class_detections.values()]
+    return filtered_boxes
+
+def plot_filtered_results(image, filtered_boxes, class_names):
+    """Plot filtered results on image"""
+    img_copy = image.copy()
+    
+    for box in filtered_boxes:
+        # Get box coordinates
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+        class_id = int(box.cls[0])
+        confidence = float(box.conf[0])
+        
+        # Draw bounding box
+        cv2.rectangle(img_copy, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        
+        # Draw label
+        label = f"{class_names[class_id]}: {confidence:.2f}"
+        label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+        cv2.rectangle(img_copy, (x1, y1 - label_size[1] - 10), (x1 + label_size[0], y1), (0, 255, 0), -1)
+        cv2.putText(img_copy, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+    
+    return img_copy
 
 def process_video(model, video_path, progress_bar, status_text):
     """Process uploaded video with PPE compliance detection"""
@@ -64,9 +111,14 @@ def process_video(model, video_path, progress_bar, status_text):
         if not ret:
             break
         
-        # Run PPE detection
-        results = model(frame)
-        annotated_frame = results[0].plot()
+        # Run PPE detection with confidence threshold
+        results = model(frame, conf=0.5, iou=0.5)
+        
+        # Filter to highest confidence per class
+        filtered_boxes = filter_highest_confidence_per_class(results[0])
+        
+        # Plot filtered results
+        annotated_frame = plot_filtered_results(frame, filtered_boxes, model.names)
         
         # Write frame to output
         out.write(annotated_frame)
@@ -119,26 +171,22 @@ def main():
             
             # Process image
             with st.spinner("Processing image for PPE compliance..."):
-                processed_img, results = process_image(model, image)
+                processed_img, filtered_results = process_image(model, image)
             
             with col2:
                 st.subheader("PPE Detection Results")
                 st.image(processed_img, use_column_width=True)
             
             # Display detection results
-            if len(results.boxes) > 0:
+            if len(filtered_results) > 0:
                 st.subheader("PPE Compliance Summary")
-                detected_classes = []
-                for i, box in enumerate(results.boxes):
+                for box in filtered_results:
                     class_id = int(box.cls[0])
                     class_name = model.names[class_id]
                     confidence = float(box.conf[0])
-                    detected_classes.append(f"{class_name}: {confidence:.2f}")
-                
-                for detection in detected_classes:
-                    st.write(f"- {detection}")
+                    st.write(f"- {class_name}: {confidence:.2f}")
             else:
-                st.warning("No PPE equipment detected in the image")
+                st.warning("No PPE equipment detected in the image (confidence threshold: 0.5)")
     
     elif mode == "Video Upload":
         st.header("PPE Video Detection")
@@ -233,9 +281,14 @@ def main():
                             status_placeholder.warning("Demo time limit reached (5 minutes). This is a demo project for testing.")
                             break
                         
-                        # Run PPE detection
-                        results = model(frame)
-                        annotated_frame = results[0].plot()
+                        # Run PPE detection with confidence threshold
+                        results = model(frame, conf=0.5, iou=0.5)
+                        
+                        # Filter to highest confidence per class
+                        filtered_boxes = filter_highest_confidence_per_class(results[0])
+                        
+                        # Plot filtered results
+                        annotated_frame = plot_filtered_results(frame, filtered_boxes, model.names)
                         
                         # Convert BGR to RGB for display
                         annotated_frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
@@ -252,9 +305,9 @@ def main():
                         time_placeholder.info(f"Time remaining: {remaining_time:.0f} seconds")
                         
                         # Display current detections
-                        if len(results[0].boxes) > 0:
+                        if len(filtered_boxes) > 0:
                             current_detections = []
-                            for box in results[0].boxes:
+                            for box in filtered_boxes:
                                 class_id = int(box.cls[0])
                                 class_name = model.names[class_id]
                                 confidence = float(box.conf[0])
@@ -262,7 +315,7 @@ def main():
                             
                             status_placeholder.success(f"PPE Detected: {', '.join(current_detections)}")
                         else:
-                            status_placeholder.warning("No PPE equipment detected")
+                            status_placeholder.warning("No PPE equipment detected (threshold: 0.5)")
                         
                         # Small delay to prevent overwhelming
                         time.sleep(0.1)
@@ -275,7 +328,15 @@ def main():
                     video_placeholder.empty()
                     status_placeholder.info("Live detection stopped")
     
-    # Sidebar information
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Detection Settings")
+    st.sidebar.info(
+        "Confidence Threshold: 0.5\n"
+        "- Only detections above 50% confidence\n"
+        "- One bounding box per class (highest confidence)\n"
+        "- Reduces duplicate detections"
+    )
+    
     st.sidebar.markdown("---")
     st.sidebar.subheader("About PPE Detection")
     st.sidebar.info(
