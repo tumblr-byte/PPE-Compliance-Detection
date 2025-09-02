@@ -84,11 +84,16 @@ if mode == "Upload Image":
     if uploaded_file:
         image = Image.open(uploaded_file)
         st.subheader("Original Image")
-        st.image(image, width=400, height=400)
+        image_resized = image.resize((400, 400))
+        st.image(image_resized)
+
         with st.spinner("Processing image..."):
             annotated_img, detections = process_image(image)
+
         st.subheader("Detection Results")
-        st.image(annotated_img, width=400, height=400)
+        annotated_resized = Image.fromarray(annotated_img).resize((400, 400))
+        st.image(annotated_resized)
+
         if detections:
             st.write(f"Detected {len(detections)} PPE items:")
             for box in detections:
@@ -105,14 +110,18 @@ elif mode == "Upload Video":
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
             tmp_file.write(uploaded_video.read())
             video_path = tmp_file.name
+
         st.subheader("Original Video")
-        st.video(uploaded_video, start_time=0, format="video/mp4", width=400, height=400)
+        st.video(uploaded_video, start_time=0, format="video/mp4")
+
         if st.button("Process Video"):
             with st.spinner("Processing video..."):
                 output_path = process_video(video_path)
+
             st.subheader("Processed Video")
-            st.video(output_path, start_time=0, format="video/mp4", width=400, height=400)
+            st.video(output_path, start_time=0, format="video/mp4")
+
             with open(output_path, 'rb') as f:
                 st.download_button("Download Processed Video", data=f.read(), file_name="ppe_processed_video.mp4", mime="video/mp4")
-            os.unlink(video_path)
 
+            os.unlink(video_path)
