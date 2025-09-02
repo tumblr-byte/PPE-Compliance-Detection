@@ -6,28 +6,35 @@ from PIL import Image
 import tempfile
 import os
 
-# Page configuration
+# -------------------------------
+# Page Configuration
+# -------------------------------
 st.set_page_config(page_title="PPE Detection Demo", layout="wide")
 
 # Sidebar info
 st.sidebar.header("Upload Instructions")
-st.sidebar.info("✅ Only files up to 15MB are allowed.\n"
-                "✅ Upload an image or video to detect PPE items such as helmets and safety vests.")
+st.sidebar.info(
+    "✅ Only files up to 15MB are allowed.\n"
+    "✅ Upload an image or video to detect PPE items such as helmets and safety vests."
+)
 
 st.title("PPE Detection System")
 st.markdown("Upload an image or video below to see how the system detects PPE items. The detection will display bounding boxes and class labels.")
-
 st.markdown("---")
 
+# -------------------------------
 # Load YOLO model
+# -------------------------------
 @st.cache_resource
 def load_model():
-    model = YOLO('best.pt')
+    model = YOLO('best.pt')  # ensure this path is correct
     return model
 
 model = load_model()
 
-# Utility functions
+# -------------------------------
+# Utility Functions
+# -------------------------------
 def filter_highest_confidence_per_class(results):
     if len(results.boxes) == 0:
         return []
@@ -53,11 +60,15 @@ def plot_filtered_results(image, filtered_boxes, class_names):
     return img_copy
 
 def process_image(image):
-    img_array = np.array(image)
-    results = model(img_array, conf=0.5, iou=0.5)
-    filtered = filter_highest_confidence_per_class(results[0])
-    annotated = plot_filtered_results(img_array, filtered, model.names)
-    return annotated, filtered
+    img_array = np.array(image.convert("RGB"))
+    try:
+        results = model(img_array, conf=0.5, iou=0.5)
+        filtered = filter_highest_confidence_per_class(results[0])
+        annotated = plot_filtered_results(img_array, filtered, model.names)
+        return annotated, filtered
+    except Exception as e:
+        st.error(f"Model inference failed: {e}")
+        return img_array, []
 
 def process_video(video_path):
     cap = cv2.VideoCapture(video_path)
@@ -74,19 +85,28 @@ def process_video(video_path):
         ret, frame = cap.read()
         if not ret:
             break
-        results = model(frame, conf=0.5, iou=0.5)
-        filtered = filter_highest_confidence_per_class(results[0])
-        annotated = plot_filtered_results(frame, filtered, model.names)
+        try:
+            results = model(frame, conf=0.5, iou=0.5)
+            filtered = filter_highest_confidence_per_class(results[0])
+            annotated = plot_filtered_results(frame, filtered, model.names)
+        except Exception as e:
+            st.warning(f"Frame processing failed: {e}")
+            annotated = frame
         out.write(annotated)
 
     cap.release()
     out.release()
     return output_path
 
-# Mode selection
-mode = st.selectbox("Select Mode", ["Upload Image", "Upload Video"])
+# -------------------------------
+# File Size Limit
+# -------------------------------
+MAX_FILE_SIZE = 15 * 1024 * 1024  # 15MB
 
-MAX_FILE_SIZE = 15 * 1024 * 1024  # 15MB in bytes
+# -------------------------------
+# Mode Selection
+# -------------------------------
+mode = st.selectbox("Select Mode", ["Upload Image", "Upload Video"])
 
 if mode == "Upload Image":
     uploaded_file = st.file_uploader("Choose image", type=['png','jpg','jpeg'])
@@ -149,7 +169,8 @@ elif mode == "Upload Video":
 
                 os.unlink(video_path)
 
-# Footer note
+# -------------------------------
+# Footer Note
+# -------------------------------
 st.markdown("---")
-st.info(" This is a testing demo — results may vary. Only 15MB files are allowed for upload.")
-
+st.info("This is a testing demo — results may vary. Only 15MB files are allowed for upload.")
