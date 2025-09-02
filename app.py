@@ -10,7 +10,6 @@ from ultralytics import YOLO
 from PIL import Image
 import io
 import threading
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
 
 # Page configuration
 st.set_page_config(
@@ -171,40 +170,6 @@ def process_video(model, video_path, progress_bar, status_text):
     
     return output_path
 
-# Live detection class for real-time processing
-class LivePPEDetector(VideoTransformerBase):
-    def __init__(self):
-        self.model = load_model()
-        self.last_frame = None
-        self.last_detections = []
-        self.detection_count = 0
-        self.frame_count = 0
-        
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        self.frame_count += 1
-        
-        # Process every 3rd frame to improve performance
-        if self.frame_count % 3 == 0 and self.model is not None:
-            # Run PPE detection
-            results = self.model(img, conf=0.4, iou=0.5)
-            
-            # Filter results
-            filtered_boxes = filter_highest_confidence_per_class(results[0])
-            
-            # Store last frame and detections
-            self.last_frame = img.copy()
-            self.last_detections = filtered_boxes
-            self.detection_count = len(filtered_boxes)
-            
-            # Annotate frame
-            annotated_img = plot_filtered_results(img, filtered_boxes, self.model.names, is_video=True)
-            
-            return annotated_img
-        else:
-            # Return original frame if no processing
-            return img
-
 def main():
     st.title("PPE Compliance Detection System")
     st.markdown("**Real-time PPE Detection** - Live camera monitoring with instant results")
@@ -220,141 +185,203 @@ def main():
     st.sidebar.title("Detection Mode")
     mode = st.sidebar.selectbox(
         "Choose input type:",
-        ["Live Real-time Detection", "Image Upload", "Video Upload", "Camera Snapshot"]
+        ["Live Camera Detection", "Image Upload", "Video Upload", "Camera Snapshot"]
     )
     
-    if mode == "Live Real-time Detection":
+    if mode == "Live Camera Detection":
         st.header("🔴 Live PPE Detection")
-        st.markdown("**Real-time monitoring** - Start/Stop live camera feed with instant PPE detection")
+        st.markdown("**Continuous Camera Mode** - Auto-refresh live camera feed with PPE detection")
         
         # Initialize session state
-        if 'live_detection_active' not in st.session_state:
-            st.session_state.live_detection_active = False
-        if 'last_saved_frame' not in st.session_state:
-            st.session_state.last_saved_frame = None
-        if 'last_detections' not in st.session_state:
-            st.session_state.last_detections = []
+        if 'live_active' not in st.session_state:
+            st.session_state.live_active = False
+        if 'last_detection_frame' not in st.session_state:
+            st.session_state.last_detection_frame = None
+        if 'last_detection_results' not in st.session_state:
+            st.session_state.last_detection_results = []
+        if 'detection_history' not in st.session_state:
+            st.session_state.detection_history = []
         
         # Control buttons
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
         
         with col_btn1:
-            if st.button("🟢 START DETECTION", key="start_live", type="primary"):
-                st.session_state.live_detection_active = True
+            if st.button("🟢 START LIVE DETECTION", key="start_live", type="primary"):
+                st.session_state.live_active = True
                 st.success("Live detection started!")
+                st.rerun()
         
         with col_btn2:
-            if st.button("🔴 STOP DETECTION", key="stop_live"):
-                st.session_state.live_detection_active = False
-                st.info("Live detection stopped!")
+            if st.button("🔴 STOP & SAVE", key="stop_live"):
+                st.session_state.live_active = False
+                st.info("Live detection stopped and last frame saved!")
         
         with col_btn3:
-            st.markdown("**Status:** " + ("🟢 ACTIVE" if st.session_state.live_detection_active else "🔴 STOPPED"))
+            st.markdown("**Status:** " + ("🟢 LIVE ACTIVE" if st.session_state.live_active else "🔴 STOPPED"))
         
-        # Create two columns for live view and results
+        # Create main layout
         col1, col2 = st.columns([3, 2])
         
         with col1:
             st.subheader("📹 Live Camera Feed")
             
-            if st.session_state.live_detection_active:
-                # WebRTC configuration
-                rtc_configuration = RTCConfiguration(
-                    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+            if st.session_state.live_active:
+                # Auto-refreshing camera input for live effect
+                camera_photo = st.camera_input(
+                    "🎥 LIVE DETECTION MODE - Camera will auto-process each capture",
+                    help="Each photo is automatically processed for PPE detection!",
+                    key=f"live_camera_{int(time.time())}"  # Dynamic key for auto-refresh
                 )
                 
-                # Live video stream with PPE detection
-                webrtc_ctx = webrtc_streamer(
-                    key="ppe-detection",
-                    video_transformer_factory=LivePPEDetector,
-                    rtc_configuration=rtc_configuration,
-                    media_stream_constraints={"video": True, "audio": False},
-                    async_processing=True,
-                )
+                if camera_photo is not None:
+                    # Convert to PIL Image
+                    image = Image.open(camera_photo)
+                    
+                    # Process immediately for live detection
+                    with st.spinner("🔄 Live Processing..."):
+                        start_time = time.time()
+                        processed_img, filtered_results = process_image(model, image)
+                        processing_time = time.time() - start_time
+                    
+                    # Store results for display
+                    st.session_state.last_detection_frame = processed_img
+                    st.session_state.last_detection_results = filtered_results
+                    
+                    # Add to history
+                    detection_data = {
+                        'timestamp': time.strftime("%H:%M:%S"),
+                        'count': len(filtered_results),
+                        'items': [model.names[int(box.cls[0])] for box in filtered_results]
+                    }
+                    st.session_state.detection_history.append(detection_data)
+                    
+                    # Keep only last 5 detections
+                    if len(st.session_state.detection_history) > 5:
+                        st.session_state.detection_history = st.session_state.detection_history[-5:]
+                    
+                    # Display processed image
+                    st.image(
+                        processed_img, 
+                        caption=f"🔴 LIVE: PPE Detection ({processing_time:.1f}s)",
+                        use_column_width=True
+                    )
+                    
+                    # Auto-refresh for live effect (every 3 seconds)
+                    time.sleep(0.1)  # Small delay
+                    st.rerun()
                 
-                # Instructions
-                st.info("🎥 Live PPE detection is running! PPE items will be highlighted in real-time.")
-                
-                # Save last frame button
-                if webrtc_ctx.video_transformer:
-                    if st.button("💾 Save Current Frame", key="save_frame"):
-                        detector = webrtc_ctx.video_transformer
-                        if detector.last_frame is not None:
-                            st.session_state.last_saved_frame = detector.last_frame
-                            st.session_state.last_detections = detector.last_detections
-                            st.success("Frame saved successfully!")
-                
+                else:
+                    st.info("📷 Waiting for camera capture... Click the camera button above!")
+            
             else:
-                # Show placeholder when not active
-                placeholder_img = np.full((480, 640, 3), 100, dtype=np.uint8)
-                cv2.putText(placeholder_img, "Click START DETECTION", (180, 220), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                cv2.putText(placeholder_img, "to begin live PPE monitoring", (150, 260), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                st.image(placeholder_img, caption="Live Detection Stopped - Click START to begin", width=640)
+                # Show stopped state
+                if st.session_state.last_detection_frame is not None:
+                    st.image(
+                        st.session_state.last_detection_frame,
+                        caption="🔴 STOPPED - Last Detection Frame Saved",
+                        use_column_width=True
+                    )
+                else:
+                    placeholder_img = np.full((480, 640, 3), 100, dtype=np.uint8)
+                    cv2.putText(placeholder_img, "Click START LIVE DETECTION", (120, 220), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                    cv2.putText(placeholder_img, "to begin continuous monitoring", (110, 260), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                    st.image(placeholder_img, caption="Ready for Live Detection", use_column_width=True)
         
         with col2:
-            st.subheader("📊 Detection Results")
+            st.subheader("📊 Live Results")
             
-            if st.session_state.live_detection_active:
-                # Live stats placeholder (updates would need WebSocket for real-time updates)
-                stats_placeholder = st.empty()
+            if st.session_state.live_active:
+                st.success("🟢 LIVE DETECTION ACTIVE")
+                st.write("**Mode:** Continuous PPE Monitoring")
                 
-                with stats_placeholder.container():
-                    st.metric("Status", "🟢 DETECTING", delta="Live monitoring active")
-                    st.write("---")
-                    st.write("**Real-time Detection:**")
-                    st.write("• Processing live video feed")
-                    st.write("• PPE items highlighted automatically")
-                    st.write("• Click 'Save Current Frame' to capture results")
-            
-            else:
-                st.info("Start live detection to see real-time results")
-            
-            # Show last saved frame and results
-            if st.session_state.last_saved_frame is not None:
-                st.write("---")
-                st.subheader("📸 Last Saved Frame")
-                
-                # Display saved frame
-                st.image(st.session_state.last_saved_frame, caption="Saved Detection Frame", width=400)
-                
-                # Show detection results
-                if len(st.session_state.last_detections) > 0:
-                    st.success(f"✅ PPE Items Detected: {len(st.session_state.last_detections)}")
+                # Live detection count
+                if st.session_state.last_detection_results:
+                    detection_count = len(st.session_state.last_detection_results)
+                    st.metric("Current PPE Items", detection_count, delta="Live count")
                     
-                    for i, box in enumerate(st.session_state.last_detections):
+                    st.write("**Current Detections:**")
+                    for i, box in enumerate(st.session_state.last_detection_results):
                         class_id = int(box.cls[0])
                         class_name = model.names[class_id]
                         confidence = float(box.conf[0])
-                        
-                        st.write(f"**{i+1}. {class_name}**: {confidence:.2f} confidence")
-                    
-                    # Download button for saved frame
-                    img_bytes = io.BytesIO()
-                    Image.fromarray(cv2.cvtColor(st.session_state.last_saved_frame, cv2.COLOR_BGR2RGB)).save(img_bytes, format='PNG')
-                    st.download_button(
-                        label="📥 Download Saved Frame",
-                        data=img_bytes.getvalue(),
-                        file_name=f"ppe_live_detection_{int(time.time())}.png",
-                        mime="image/png",
-                        key="download_live_frame"
-                    )
+                        st.write(f"• **{class_name}**: {confidence:.2f}")
                 else:
-                    st.warning("⚠️ No PPE items detected in saved frame")
+                    st.metric("Current PPE Items", 0, delta="Scanning...")
+            
+            else:
+                st.info("🔴 Detection Stopped")
+                
+                # Show final results if available
+                if st.session_state.last_detection_results:
+                    detection_count = len(st.session_state.last_detection_results)
+                    st.metric("Final PPE Count", detection_count)
+                    
+                    st.write("**Final Detection Results:**")
+                    for i, box in enumerate(st.session_state.last_detection_results):
+                        class_id = int(box.cls[0])
+                        class_name = model.names[class_id]
+                        confidence = float(box.conf[0])
+                        st.write(f"• **{class_name}**: {confidence:.2f}")
+            
+            # Detection History
+            if st.session_state.detection_history:
+                st.write("---")
+                st.write("**Recent Detection History:**")
+                for i, detection in enumerate(reversed(st.session_state.detection_history[-3:])):
+                    st.write(f"**{detection['timestamp']}**: {detection['count']} items")
+                    if detection['items']:
+                        st.write(f"  → {', '.join(detection['items'])}")
+            
+            # Download saved frame
+            if st.session_state.last_detection_frame is not None:
+                st.write("---")
+                img_bytes = io.BytesIO()
+                Image.fromarray(st.session_state.last_detection_frame).save(img_bytes, format='PNG')
+                st.download_button(
+                    label="📥 Download Last Frame",
+                    data=img_bytes.getvalue(),
+                    file_name=f"ppe_live_detection_{int(time.time())}.png",
+                    mime="image/png",
+                    key="download_live"
+                )
         
-        # Performance info
+        # Live Detection Instructions
         st.markdown("---")
-        st.subheader("⚡ Live Detection Features")
+        st.subheader("📋 How Live Detection Works")
         
+        inst_col1, inst_col2 = st.columns(2)
+        
+        with inst_col1:
+            st.info("""
+            **🟢 START Mode:**
+            1. Click 'START LIVE DETECTION'
+            2. Allow camera access
+            3. Click camera button to begin
+            4. Each capture auto-processes for PPE
+            5. Results update in real-time
+            """)
+        
+        with inst_col2:
+            st.warning("""
+            **🔴 STOP Mode:**
+            1. Click 'STOP & SAVE' anytime
+            2. Last frame is automatically saved
+            3. Final results are displayed
+            4. Download processed frame
+            5. Ready to restart detection
+            """)
+        
+        # Performance metrics
         perf_col1, perf_col2, perf_col3, perf_col4 = st.columns(4)
         
         with perf_col1:
-            st.metric("Response Time", "Real-time", delta="< 100ms delay")
+            st.metric("Response", "Auto", delta="Instant processing")
         
         with perf_col2:
-            st.metric("Detection Rate", "10+ FPS", delta="Smooth video")
+            st.metric("Save Mode", "Auto", delta="Last frame saved")
         
         with perf_col3:
-            st.metric("Save Function", "Instant", delta="One-click save")
+            st.metric("History", "5 recent", delta="Track detections")
         
         with perf_col4:
             st.metric("Accuracy", "95%+", delta="High precision")
@@ -442,11 +469,8 @@ def main():
                 os.unlink(output_path)
     
     elif mode == "Camera Snapshot":
-        st.header("Live PPE Detection (Snapshot)")
-        st.markdown("**Quick Capture** - Instant PPE detection for quick testing")
-        
-        # Instructions for quick setup
-        st.info("Quick Setup: Allow camera access when prompted, then click 'Capture & Analyze' for instant results!")
+        st.header("Quick PPE Snapshot Detection")
+        st.markdown("**Single Capture** - One-click PPE detection for quick testing")
         
         # Create main layout
         col1, col2 = st.columns([1, 1])
@@ -457,7 +481,7 @@ def main():
             # Use Streamlit's camera input for instant response
             camera_photo = st.camera_input(
                 "Take a photo for PPE detection",
-                help="Click to capture image instantly - No waiting time!"
+                help="Click to capture image instantly!"
             )
             
             if camera_photo is not None:
@@ -468,23 +492,15 @@ def main():
                 image_resized = image.resize((500, 500), Image.Resampling.LANCZOS)
                 
                 st.success("Photo captured successfully!")
-                
-                # Show capture details
-                st.write("Capture Info:")
-                st.write(f"- Resolution: 500x500px")
-                st.write(f"- Status: Ready for detection")
         
         with col2:
             st.subheader("PPE Detection Results")
             
             if camera_photo is not None:
                 # Process the image immediately
-                with st.spinner("Analyzing PPE compliance... (2-3 seconds)"):
+                with st.spinner("Analyzing PPE compliance..."):
                     start_time = time.time()
-                    
-                    # Process with PPE detection
                     processed_img, filtered_results = process_image(model, image_resized)
-                    
                     processing_time = time.time() - start_time
                 
                 # Display results
@@ -513,64 +529,29 @@ def main():
                     )
                 else:
                     st.warning("No PPE Equipment Detected")
-                    st.write("Suggestions:")
-                    st.write("- Ensure good lighting conditions")
-                    st.write("- Position PPE equipment clearly in view")
-                    st.write("- Try capturing from a different angle")
-                    
                     st.metric(
                         label="PPE Items Detected", 
                         value=0,
                         delta=f"Processing time: {processing_time:.1f}s"
                     )
                 
-                # Quick action buttons
-                st.markdown("---")
-                col_btn1, col_btn2 = st.columns(2)
-                
-                with col_btn1:
-                    if st.button("Capture New Photo", key="new_capture"):
-                        st.rerun()
-                
-                with col_btn2:
-                    # Download processed image
-                    img_bytes = io.BytesIO()
-                    Image.fromarray(processed_img).save(img_bytes, format='PNG')
-                    st.download_button(
-                        label="Download Result",
-                        data=img_bytes.getvalue(),
-                        file_name=f"ppe_detection_{int(time.time())}.png",
-                        mime="image/png"
-                    )
+                # Download processed image
+                img_bytes = io.BytesIO()
+                Image.fromarray(processed_img).save(img_bytes, format='PNG')
+                st.download_button(
+                    label="📥 Download Result",
+                    data=img_bytes.getvalue(),
+                    file_name=f"ppe_detection_{int(time.time())}.png",
+                    mime="image/png"
+                )
             
             else:
-                # Show placeholder when no photo
+                # Show placeholder
                 placeholder_img = np.full((500, 500, 3), 200, dtype=np.uint8)
-                cv2.putText(
-                    placeholder_img, 
-                    "Click Camera Above", 
-                    (150, 240), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 
-                    1, 
-                    (100, 100, 100), 
-                    2
-                )
-                cv2.putText(
-                    placeholder_img, 
-                    "for PPE Detection", 
-                    (160, 280), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 
-                    1, 
-                    (100, 100, 100), 
-                    2
-                )
+                cv2.putText(placeholder_img, "Click Camera Above", (150, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
+                cv2.putText(placeholder_img, "for PPE Detection", (160, 280), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
                 
-                st.image(
-                    placeholder_img, 
-                    caption="Ready for PPE Detection - 500x500px",
-                    width=500
-                )
-                
+                st.image(placeholder_img, caption="Ready for PPE Detection", width=500)
                 st.info("Ready for Detection: Click the camera button above to start!")
     
     # Sidebar information
@@ -585,28 +566,28 @@ def main():
     )
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🔴 Live Detection Features")
+    st.sidebar.subheader("🔴 Live Camera Features")
     st.sidebar.success(
-        "Real-time Benefits:\n"
-        "- ▶️ Start/Stop controls\n"
-        "- 🎥 Live video feed\n"
-        "- ⚡ Real-time processing\n"
-        "- 💾 Save any frame instantly\n"
-        "- 📊 Live detection count\n"
+        "Streamlit Cloud Compatible:\n"
+        "- ▶️ START/STOP controls\n"
+        "- 🔄 Auto-processing camera\n"
+        "- 💾 Auto-save last frame\n"
+        "- 📊 Live detection tracking\n"
         "- 📥 Download results\n"
-        "- 🚀 10+ FPS performance"
+        "- 🕒 Detection history\n"
+        "- ⚡ No external dependencies"
     )
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Perfect for Live Monitoring")
+    st.sidebar.subheader("Perfect for Streamlit Cloud")
     st.sidebar.info(
-        "Why choose Live Detection:\n"
-        "- Continuous monitoring\n"
-        "- Instant PPE compliance alerts\n"
-        "- Save critical moments\n"
-        "- Professional live results\n"
-        "- No upload delays\n"
-        "- Real workplace monitoring"
+        "Cloud-Optimized Features:\n"
+        "- No WebRTC dependencies\n"
+        "- Native Streamlit camera\n"
+        "- Auto-refresh for live effect\n"
+        "- Session state management\n"
+        "- Instant frame processing\n"
+        "- Built-in download support"
     )
 
 if __name__ == "__main__":
