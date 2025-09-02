@@ -84,11 +84,11 @@ if mode == "Upload Image":
     if uploaded_file:
         image = Image.open(uploaded_file)
         st.subheader("Original Image")
-        st.image(image, use_column_width=True)
+        st.image(image, width=400, height=400)
         with st.spinner("Processing image..."):
             annotated_img, detections = process_image(image)
         st.subheader("Detection Results")
-        st.image(annotated_img, use_column_width=True)
+        st.image(annotated_img, width=400, height=400)
         if detections:
             st.write(f"Detected {len(detections)} PPE items:")
             for box in detections:
@@ -106,15 +106,13 @@ elif mode == "Upload Video":
             tmp_file.write(uploaded_video.read())
             video_path = tmp_file.name
         st.subheader("Original Video")
-        st.video(uploaded_video)
+        st.video(uploaded_video, start_time=0, format="video/mp4", width=400, height=400)
         if st.button("Process Video"):
             with st.spinner("Processing video..."):
                 output_path = process_video(video_path)
             st.subheader("Processed Video")
-            st.video(output_path)
+            st.video(output_path, start_time=0, format="video/mp4", width=400, height=400)
             with open(output_path, 'rb') as f:
                 st.download_button("Download Processed Video", data=f.read(), file_name="ppe_processed_video.mp4", mime="video/mp4")
             os.unlink(video_path)
-
-
 
