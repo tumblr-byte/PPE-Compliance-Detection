@@ -270,22 +270,22 @@ def main():
                 os.unlink(output_path)
     
     elif mode == "Live Camera":
-        st.header("🎥 Live PPE Detection (500x500px)")
+        st.header("Live PPE Detection (500x500px)")
         st.markdown("**Fast & Responsive** - Instant PPE detection for quick client testing")
         
         # Instructions for quick setup
-        st.info("📋 **Quick Setup:** Allow camera access when prompted, then click 'Capture & Analyze' for instant results!")
+        st.info("Quick Setup: Allow camera access when prompted, then click 'Capture & Analyze' for instant results!")
         
         # Create main layout
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            st.subheader("📸 Camera Capture")
+            st.subheader("Camera Capture")
             
             # Use Streamlit's camera input for instant response
             camera_photo = st.camera_input(
                 "Take a photo for PPE detection",
-                help="📷 Click to capture image instantly - No waiting time!"
+                help="Click to capture image instantly - No waiting time!"
             )
             
             if camera_photo is not None:
@@ -295,19 +295,19 @@ def main():
                 # Resize to 500x500 for consistent display
                 image_resized = image.resize((500, 500), Image.Resampling.LANCZOS)
                 
-                st.success("✅ Photo captured successfully!")
+                st.success("Photo captured successfully!")
                 
                 # Show capture details
-                st.write("📊 **Capture Info:**")
+                st.write("Capture Info:")
                 st.write(f"- Resolution: 500x500px")
                 st.write(f"- Status: Ready for detection")
         
         with col2:
-            st.subheader("🔍 PPE Detection Results")
+            st.subheader("PPE Detection Results")
             
             if camera_photo is not None:
                 # Process the image immediately
-                with st.spinner("🔄 Analyzing PPE compliance... (2-3 seconds)"):
+                with st.spinner("Analyzing PPE compliance... (2-3 seconds)"):
                     start_time = time.time()
                     
                     # Process with PPE detection
@@ -324,7 +324,7 @@ def main():
                 
                 # Show detection summary
                 if len(filtered_results) > 0:
-                    st.success("✅ **PPE Equipment Detected:**")
+                    st.success("PPE Equipment Detected:")
                     detection_count = 0
                     for box in filtered_results:
                         detection_count += 1
@@ -332,17 +332,7 @@ def main():
                         class_name = model.names[class_id]
                         confidence = float(box.conf[0])
                         
-                        # Show each detection with emoji
-                        if 'vest' in class_name.lower():
-                            emoji = "🦺"
-                        elif 'glove' in class_name.lower():
-                            emoji = "🧤"
-                        elif 'hat' in class_name.lower() or 'helmet' in class_name.lower():
-                            emoji = "⛑️"
-                        else:
-                            emoji = "🛡️"
-                        
-                        st.write(f"{emoji} **{class_name}**: {confidence:.2f} confidence")
+                        st.write(f"**{class_name}**: {confidence:.2f} confidence")
                     
                     st.metric(
                         label="Total PPE Items Detected", 
@@ -350,8 +340,8 @@ def main():
                         delta=f"Processing time: {processing_time:.1f}s"
                     )
                 else:
-                    st.warning("⚠️ **No PPE Equipment Detected**")
-                    st.write("📝 **Suggestions:**")
+                    st.warning("No PPE Equipment Detected")
+                    st.write("Suggestions:")
                     st.write("- Ensure good lighting conditions")
                     st.write("- Position PPE equipment clearly in view")
                     st.write("- Try capturing from a different angle")
@@ -367,7 +357,7 @@ def main():
                 col_btn1, col_btn2 = st.columns(2)
                 
                 with col_btn1:
-                    if st.button("📸 Capture New Photo", key="new_capture"):
+                    if st.button("Capture New Photo", key="new_capture"):
                         st.rerun()
                 
                 with col_btn2:
@@ -375,7 +365,7 @@ def main():
                     img_bytes = io.BytesIO()
                     Image.fromarray(processed_img).save(img_bytes, format='PNG')
                     st.download_button(
-                        label="💾 Download Result",
+                        label="Download Result",
                         data=img_bytes.getvalue(),
                         file_name=f"ppe_detection_{int(time.time())}.png",
                         mime="image/png"
@@ -409,25 +399,22 @@ def main():
                     width=500
                 )
                 
-                st.info("📱 **Ready for Detection:** Click the camera button above to start!")
+                st.info("Ready for Detection: Click the camera button above to start!")
         
         # Performance metrics for client confidence
         st.markdown("---")
-        st.subheader("⚡ Performance Metrics")
+        st.subheader("Performance Metrics")
         
-        perf_col1, perf_col2, perf_col3, perf_col4 = st.columns(4)
+        perf_col1, perf_col2, perf_col3 = st.columns(3)
         
         with perf_col1:
-            st.metric("Response Time", "< 3 seconds", "Instant capture")
+            st.metric("Response Time", "< 3 seconds")
         
         with perf_col2:
-            st.metric("Image Resolution", "500x500px", "Fixed size")
+            st.metric("Image Resolution", "500x500px")
         
         with perf_col3:
-            st.metric("Detection Accuracy", "95%+", "High confidence")
-        
-        with perf_col4:
-            st.metric("Client Experience", "⭐⭐⭐⭐⭐", "No waiting")
+            st.metric("Detection Accuracy", "95%+")
     
     # Sidebar information
     st.sidebar.markdown("---")
@@ -441,9 +428,9 @@ def main():
     )
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("⚡ Live Camera Benefits")
+    st.sidebar.subheader("Live Camera Benefits")
     st.sidebar.success(
-        "**✅ Client-Friendly Features:**\n"
+        "Client-Friendly Features:\n"
         "- Instant camera capture\n"
         "- No loading delays\n"
         "- 500x500px fixed display\n"
@@ -453,16 +440,17 @@ def main():
     )
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🎯 Perfect for Client Testing")
+    st.sidebar.subheader("Perfect for Client Testing")
     st.sidebar.info(
-        "**Why clients will love this:**\n"
-        "- No patience required ⏱️\n"
-        "- Instant feedback 🚀\n"
-        "- Simple one-click operation 👆\n"
-        "- Professional results 💼\n"
-        "- Works in any browser 🌐"
+        "Why clients will love this:\n"
+        "- No patience required\n"
+        "- Instant feedback\n"
+        "- Simple one-click operation\n"
+        "- Professional results\n"
+        "- Works in any browser"
     )
 
 if __name__ == "__main__":
     main()
+
 
