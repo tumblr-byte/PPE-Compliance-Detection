@@ -9,6 +9,8 @@ import torch
 from ultralytics import YOLO
 from PIL import Image
 import io
+import threading
+import queue
 
 # Page configuration
 st.set_page_config(
@@ -17,6 +19,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize session state for webcam
+if 'webcam_running' not in st.session_state:
+    st.session_state.webcam_running = False
+if 'webcam_thread' not in st.session_state:
+    st.session_state.webcam_thread = None
+if 'frame_queue' not in st.session_state:
+    st.session_state.frame_queue = queue.Queue(maxsize=2)
 
 # Load model
 @st.cache_resource
@@ -76,9 +86,9 @@ def plot_filtered_results(image, filtered_boxes, class_names, is_video=False):
     if is_video:
         # Enhanced visibility for video
         box_thickness = 4
-        font_scale = 1.0
+        font_scale = 1.2
         font_thickness = 3
-        label_padding = 15
+        label_padding = 20
     else:
         # Normal settings for image
         box_thickness = 2
@@ -103,7 +113,7 @@ def plot_filtered_results(image, filtered_boxes, class_names, is_video=False):
         cv2.rectangle(
             img_copy, 
             (x1, y1 - label_size[1] - label_padding), 
-            (x1 + label_size[0] + 10, y1), 
+            (x1 + label_size[0] + 15, y1), 
             (0, 255, 0), 
             -1
         )
@@ -112,7 +122,7 @@ def plot_filtered_results(image, filtered_boxes, class_names, is_video=False):
         cv2.putText(
             img_copy, 
             label, 
-            (x1 + 5, y1 - 5), 
+            (x1 + 5, y1 - 8), 
             cv2.FONT_HERSHEY_SIMPLEX, 
             font_scale, 
             (0, 0, 0), 
@@ -120,6 +130,68 @@ def plot_filtered_results(image, filtered_boxes, class_names, is_video=False):
         )
     
     return img_copy
+
+def webcam_capture_thread(model, frame_queue, stop_event, display_size=(500, 500)):
+    """Background thread for webcam capture and processing"""
+    cap = cv2.VideoCapture(0)
+    
+    # Set camera resolution
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, display_size[0])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, display_size[1])
+    
+    # Set buffer size to 1 to reduce latency
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    
+    start_time = time.time()
+    max_duration = 300  # 5 minutes
+    
+    try:
+        while not stop_event.is_set():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Check time limit
+            elapsed_time = time.time() - start_time
+            if elapsed_time > max_duration:
+                break
+            
+            # Resize frame to exact display size
+            frame_resized = cv2.resize(frame, display_size)
+            
+            # Run PPE detection
+            try:
+                results = model(frame_resized, conf=0.5, iou=0.5)
+                filtered_boxes = filter_highest_confidence_per_class(results[0])
+                annotated_frame = plot_filtered_results(frame_resized, filtered_boxes, model.names, is_video=True)
+                
+                # Convert BGR to RGB
+                frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+                
+                # Put frame in queue (non-blocking)
+                detection_info = {
+                    'frame': frame_rgb,
+                    'detections': filtered_boxes,
+                    'elapsed_time': elapsed_time,
+                    'remaining_time': max_duration - elapsed_time
+                }
+                
+                if not frame_queue.full():
+                    try:
+                        frame_queue.put_nowait(detection_info)
+                    except queue.Full:
+                        pass
+                        
+            except Exception as e:
+                print(f"Detection error: {e}")
+                continue
+            
+            time.sleep(0.05)  # Reduce CPU usage
+            
+    except Exception as e:
+        print(f"Webcam capture error: {e}")
+    finally:
+        cap.release()
 
 def process_video(model, video_path, progress_bar, status_text):
     """Process uploaded video with PPE compliance detection"""
@@ -266,100 +338,124 @@ def main():
                 os.unlink(output_path)
     
     elif mode == "Live Camera":
-        st.header("Live PPE Detection")
+        st.header("Live PPE Detection (500x500px)")
         st.markdown("**Note: This is a demo project for testing. Live feed is limited to 5 minutes maximum.**")
         
-        # Camera settings
+        # Create layout
         col1, col2 = st.columns([1, 2])
         
         with col1:
             st.subheader("Camera Controls")
-            start_camera = st.button("Start PPE Detection")
-            stop_camera = st.button("Stop Detection")
+            
+            # Start camera button
+            if st.button("🎥 Start PPE Detection", key="start_btn"):
+                if not st.session_state.webcam_running:
+                    st.session_state.webcam_running = True
+                    # Create stop event for thread
+                    st.session_state.stop_event = threading.Event()
+                    # Start webcam thread
+                    st.session_state.webcam_thread = threading.Thread(
+                        target=webcam_capture_thread,
+                        args=(model, st.session_state.frame_queue, st.session_state.stop_event, (500, 500))
+                    )
+                    st.session_state.webcam_thread.daemon = True
+                    st.session_state.webcam_thread.start()
+                    st.rerun()
+            
+            # Stop camera button
+            if st.button("🛑 Stop Detection", key="stop_btn"):
+                if st.session_state.webcam_running:
+                    st.session_state.webcam_running = False
+                    if hasattr(st.session_state, 'stop_event'):
+                        st.session_state.stop_event.set()
+                    # Clear the queue
+                    while not st.session_state.frame_queue.empty():
+                        try:
+                            st.session_state.frame_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                    st.rerun()
             
             # Display settings
             st.subheader("Display Settings")
-            display_width = 400
-            display_height = 300
-            st.write(f"Resolution: {display_width} x {display_height}")
+            st.write("📐 Resolution: 500 x 500 pixels")
+            st.write("⏱️ Max Duration: 5 minutes")
+            st.write(f"📊 Status: {'🟢 Running' if st.session_state.webcam_running else '🔴 Stopped'}")
         
         with col2:
-            if start_camera:
-                st.subheader("Live PPE Detection Feed")
-                
-                # Create placeholders
-                video_placeholder = st.empty()
-                status_placeholder = st.empty()
-                time_placeholder = st.empty()
-                
-                # Initialize camera
-                cap = cv2.VideoCapture(0)
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, display_width)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, display_height)
-                
-                start_time = time.time()
-                max_duration = 300  # 5 minutes in seconds
-                
+            st.subheader("Live PPE Detection Feed")
+            
+            # Create placeholders
+            video_placeholder = st.empty()
+            detection_placeholder = st.empty()
+            time_placeholder = st.empty()
+            
+            if st.session_state.webcam_running:
+                # Display live feed
                 try:
-                    while cap.isOpened():
-                        ret, frame = cap.read()
-                        if not ret:
-                            st.error("Failed to access camera")
-                            break
+                    # Get latest frame from queue
+                    detection_info = st.session_state.frame_queue.get_nowait()
+                    
+                    # Display the frame with fixed size
+                    video_placeholder.image(
+                        detection_info['frame'],
+                        caption="Live PPE Detection - 500x500px",
+                        width=500,
+                        channels="RGB"
+                    )
+                    
+                    # Display detection results
+                    if len(detection_info['detections']) > 0:
+                        detections_text = []
+                        for box in detection_info['detections']:
+                            class_id = int(box.cls[0])
+                            class_name = model.names[class_id]
+                            confidence = float(box.conf[0])
+                            detections_text.append(f"✅ {class_name} ({confidence:.2f})")
                         
-                        # Check time limit
-                        elapsed_time = time.time() - start_time
-                        if elapsed_time > max_duration:
-                            status_placeholder.warning("Demo time limit reached (5 minutes). This is a demo project for testing.")
-                            break
-                        
-                        # Run PPE detection with confidence threshold
-                        results = model(frame, conf=0.5, iou=0.5)
-                        
-                        # Filter to highest confidence per class
-                        filtered_boxes = filter_highest_confidence_per_class(results[0])
-                        
-                        # Plot filtered results with enhanced visibility for live video
-                        annotated_frame = plot_filtered_results(frame, filtered_boxes, model.names, is_video=True)
-                        
-                        # Convert BGR to RGB for display
-                        annotated_frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-                        
-                        # Display frame with fixed size
-                        video_placeholder.image(
-                            annotated_frame_rgb,
-                            channels="RGB",
-                            width=display_width
-                        )
-                        
-                        # Update time display
-                        remaining_time = max_duration - elapsed_time
-                        time_placeholder.info(f"Time remaining: {remaining_time:.0f} seconds")
-                        
-                        # Display current detections
-                        if len(filtered_boxes) > 0:
-                            current_detections = []
-                            for box in filtered_boxes:
-                                class_id = int(box.cls[0])
-                                class_name = model.names[class_id]
-                                confidence = float(box.conf[0])
-                                current_detections.append(f"{class_name} ({confidence:.2f})")
-                            
-                            status_placeholder.success(f"PPE Detected: {', '.join(current_detections)}")
-                        else:
-                            status_placeholder.warning("No PPE equipment detected")
-                        
-                        # Small delay to prevent overwhelming
-                        time.sleep(0.1)
-                
+                        detection_placeholder.success("**PPE Detected:**\n\n" + "\n".join(detections_text))
+                    else:
+                        detection_placeholder.warning("⚠️ No PPE equipment detected")
+                    
+                    # Display time remaining
+                    remaining_time = max(0, detection_info['remaining_time'])
+                    if remaining_time > 0:
+                        minutes = int(remaining_time // 60)
+                        seconds = int(remaining_time % 60)
+                        time_placeholder.info(f"⏰ Time remaining: {minutes}:{seconds:02d}")
+                    else:
+                        time_placeholder.error("⏰ Demo time limit reached!")
+                        st.session_state.webcam_running = False
+                        if hasattr(st.session_state, 'stop_event'):
+                            st.session_state.stop_event.set()
+                    
+                    # Auto-refresh every 100ms for smooth video
+                    time.sleep(0.1)
+                    st.rerun()
+                    
+                except queue.Empty:
+                    # No new frame available, show loading
+                    video_placeholder.info("📹 Initializing camera... Please wait.")
+                    time.sleep(0.5)
+                    st.rerun()
+                    
                 except Exception as e:
-                    st.error(f"Error during live detection: {str(e)}")
-                
-                finally:
-                    cap.release()
-                    video_placeholder.empty()
-                    status_placeholder.info("Live detection stopped")
+                    st.error(f"Error displaying webcam feed: {str(e)}")
+                    st.session_state.webcam_running = False
+                    
+            else:
+                # Show placeholder when not running
+                placeholder_img = np.full((500, 500, 3), 128, dtype=np.uint8)
+                video_placeholder.image(
+                    placeholder_img,
+                    caption="Click 'Start PPE Detection' to begin live detection",
+                    width=500,
+                    channels="RGB"
+                )
+                detection_placeholder.info("🎯 Ready for PPE detection")
+                time_placeholder.info("⏰ Timer: Ready")
     
+    # Sidebar information
     st.sidebar.markdown("---")
     st.sidebar.subheader("About PPE Detection")
     st.sidebar.info(
@@ -371,12 +467,24 @@ def main():
     )
     
     st.sidebar.markdown("---")
+    st.sidebar.subheader("Live Camera Features")
+    st.sidebar.success(
+        "✅ **Improved Live Detection:**\n"
+        "- 500x500px display resolution\n"
+        "- Enhanced visibility with larger text\n"
+        "- Real-time PPE compliance alerts\n"
+        "- Smooth video streaming\n"
+        "- Background processing for better performance"
+    )
+    
+    st.sidebar.markdown("---")
     st.sidebar.subheader("Demo Limitations")
     st.sidebar.warning(
         "This is a demo project for testing purposes:\n"
         "- Live camera limited to 5 minutes\n"
         "- Processing time may vary\n"
-        "- Accuracy depends on lighting conditions"
+        "- Accuracy depends on lighting conditions\n"
+        "- Requires webcam permissions"
     )
 
 if __name__ == "__main__":
