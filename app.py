@@ -1,12 +1,4 @@
-# Streamlit PPE Detection — Live Webcam (webrtc) Example
 
-This single document contains everything you need to run a *true live webcam* PPE detection app in Streamlit using **streamlit-webrtc** and **Ultralytics YOLO**. Put `best.pt` in the same repo root (or change the path in the code).
-
----
-
-## File: `app.py`
-
-```python
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
 import cv2
@@ -150,4 +142,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
