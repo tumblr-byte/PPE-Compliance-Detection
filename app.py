@@ -9,8 +9,15 @@ import os
 # Page configuration
 st.set_page_config(page_title="PPE Detection Demo", layout="wide")
 
+# Sidebar info
+st.sidebar.header("Upload Instructions")
+st.sidebar.info("✅ Only files up to 15MB are allowed.\n"
+                "✅ Upload an image or video to detect PPE items such as helmets and safety vests.")
+
 st.title("PPE Detection System")
-st.markdown("Upload an image or video below to see how the system detects PPE items such as helmets and safety vests. The detection will display bounding boxes and class labels.")
+st.markdown("Upload an image or video below to see how the system detects PPE items. The detection will display bounding boxes and class labels.")
+
+st.markdown("---")
 
 # Load YOLO model
 @st.cache_resource
@@ -79,57 +86,70 @@ def process_video(video_path):
 # Mode selection
 mode = st.selectbox("Select Mode", ["Upload Image", "Upload Video"])
 
+MAX_FILE_SIZE = 15 * 1024 * 1024  # 15MB in bytes
+
 if mode == "Upload Image":
     uploaded_file = st.file_uploader("Choose image", type=['png','jpg','jpeg'])
     if uploaded_file:
-        image = Image.open(uploaded_file)
-        with st.spinner("Processing image..."):
-            annotated_img, detections = process_image(image)
-
-        # Resize images for display
-        image_resized = image.resize((400, 400))
-        annotated_resized = Image.fromarray(annotated_img).resize((400, 400))
-
-        # Side-by-side display
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Original Image")
-            st.image(image_resized)
-        with col2:
-            st.subheader("Detection Result")
-            st.image(annotated_resized)
-
-        if detections:
-            st.write(f"Detected {len(detections)} PPE items:")
-            for box in detections:
-                class_id = int(box.cls[0])
-                class_name = model.names[class_id]
-                confidence = float(box.conf[0])
-                st.write(f"• {class_name}: {confidence:.2f}")
+        if uploaded_file.size > MAX_FILE_SIZE:
+            st.warning("❌ File too large. Only 15MB files are allowed.")
         else:
-            st.write("No PPE detected.")
+            image = Image.open(uploaded_file)
+            with st.spinner("Processing image..."):
+                annotated_img, detections = process_image(image)
+
+            # Resize images for display
+            image_resized = image.resize((400, 400))
+            annotated_resized = Image.fromarray(annotated_img).resize((400, 400))
+
+            # Side-by-side display
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Original Image")
+                st.image(image_resized)
+            with col2:
+                st.subheader("Detection Result")
+                st.image(annotated_resized)
+
+            if detections:
+                st.write(f"Detected {len(detections)} PPE items:")
+                for box in detections:
+                    class_id = int(box.cls[0])
+                    class_name = model.names[class_id]
+                    confidence = float(box.conf[0])
+                    st.write(f"• {class_name}: {confidence:.2f}")
+            else:
+                st.write("No PPE detected.")
 
 elif mode == "Upload Video":
     uploaded_video = st.file_uploader("Choose video", type=['mp4','avi','mov'])
     if uploaded_video:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
-            tmp_file.write(uploaded_video.read())
-            video_path = tmp_file.name
+        if uploaded_video.size > MAX_FILE_SIZE:
+            st.warning("❌ File too large. Only 15MB files are allowed.")
+        else:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
+                tmp_file.write(uploaded_video.read())
+                video_path = tmp_file.name
 
-        if st.button("Process Video"):
-            with st.spinner("Processing video..."):
-                output_path = process_video(video_path)
+            if st.button("Process Video"):
+                with st.spinner("Processing video..."):
+                    output_path = process_video(video_path)
 
-            # Side-by-side layout
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("Original Video")
-                st.video(uploaded_video, start_time=0)
-            with col2:
-                st.subheader("Processed Video")
-                st.video(output_path, start_time=0)
+                # Side-by-side layout
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("Original Video")
+                    st.video(uploaded_video, start_time=0)
+                with col2:
+                    st.subheader("Processed Video")
+                    st.video(output_path, start_time=0)
 
-            with open(output_path, 'rb') as f:
-                st.download_button("Download Processed Video", data=f.read(), file_name="ppe_processed_video.mp4", mime="video/mp4")
+                with open(output_path, 'rb') as f:
+                    st.download_button("Download Processed Video", data=f.read(), file_name="ppe_processed_video.mp4", mime="video/mp4")
 
-            os.unlink(video_path)
+                os.unlink(video_path)
+
+# Footer note
+st.markdown("---")
+st.info(" This is a testing demo — results may vary. Only 15MB files are allowed for upload.")
+
