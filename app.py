@@ -9,7 +9,7 @@ import torch
 from ultralytics import YOLO
 from PIL import Image
 import io
-import base64
+import threading
 
 # Page configuration
 st.set_page_config(
@@ -80,179 +80,6 @@ def plot_filtered_results(image, filtered_boxes, class_names):
     
     return img_copy
 
-def get_live_webcam_component():
-    """Return HTML component for live webcam"""
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <style>
-            body { 
-                margin: 0; 
-                padding: 15px; 
-                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-                background: #ffffff;
-            }
-            .container { 
-                max-width: 700px; 
-                margin: 0 auto; 
-                text-align: center; 
-            }
-            .controls { 
-                margin: 15px 0; 
-            }
-            button { 
-                padding: 12px 24px; 
-                margin: 8px; 
-                font-size: 14px; 
-                font-weight: 500; 
-                border: none; 
-                border-radius: 6px; 
-                cursor: pointer; 
-                transition: all 0.2s; 
-            }
-            #startBtn { 
-                background: #28a745; 
-                color: white; 
-            }
-            #stopBtn { 
-                background: #dc3545; 
-                color: white; 
-            }
-            button:hover { 
-                opacity: 0.9; 
-                transform: translateY(-1px); 
-            }
-            #video { 
-                width: 100%; 
-                max-width: 640px; 
-                border: 2px solid #dee2e6; 
-                border-radius: 8px; 
-                box-shadow: 0 2px 8px rgba(0,0,0,0.1); 
-            }
-            #canvas { 
-                display: none; 
-            }
-            #status { 
-                font-size: 14px; 
-                font-weight: 500; 
-                margin: 15px 0; 
-                padding: 10px 16px; 
-                border-radius: 6px; 
-                background: #f8f9fa; 
-                border: 1px solid #dee2e6;
-            }
-            .live-indicator {
-                display: inline-block;
-                width: 8px;
-                height: 8px;
-                background: #dc3545;
-                border-radius: 50%;
-                margin-right: 6px;
-                animation: pulse 1.5s infinite;
-            }
-            @keyframes pulse {
-                0% { opacity: 1; }
-                50% { opacity: 0.5; }
-                100% { opacity: 1; }
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div id="status">Ready to start detection</div>
-            
-            <div class="controls">
-                <button id="startBtn">Start Live Detection</button>
-                <button id="stopBtn">Stop & Save</button>
-            </div>
-            
-            <video id="video" autoplay muted playsinline></video>
-            <canvas id="canvas"></canvas>
-        </div>
-        
-        <script>
-        let video, canvas, context;
-        let isStreaming = false;
-        let streamInterval;
-        let frameCount = 0;
-
-        document.getElementById('startBtn').addEventListener('click', startWebcam);
-        document.getElementById('stopBtn').addEventListener('click', stopWebcam);
-
-        async function startWebcam() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 640, height: 480, facingMode: 'environment' } 
-                });
-                
-                video = document.getElementById('video');
-                canvas = document.getElementById('canvas');
-                context = canvas.getContext('2d');
-                
-                video.srcObject = stream;
-                video.play();
-                
-                video.addEventListener('loadedmetadata', () => {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    isStreaming = true;
-                    document.getElementById('status').innerHTML = 
-                        '<span class="live-indicator"></span>Live detection active';
-                    captureFrames();
-                });
-                
-            } catch (err) {
-                document.getElementById('status').innerText = 'Camera access denied';
-            }
-        }
-
-        function stopWebcam() {
-            if (video && video.srcObject) {
-                video.srcObject.getTracks().forEach(track => track.stop());
-                video.srcObject = null;
-            }
-            
-            if (streamInterval) clearInterval(streamInterval);
-            
-            isStreaming = false;
-            document.getElementById('status').innerText = 'Detection stopped - Frame saved';
-        }
-
-        function captureFrames() {
-            if (!isStreaming) return;
-            
-            streamInterval = setInterval(() => {
-                if (isStreaming && video.readyState === video.HAVE_ENOUGH_DATA) {
-                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    
-                    canvas.toBlob(blob => {
-                        if (blob) {
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                                const base64Data = reader.result.split(',')[1];
-                                frameCount++;
-                                
-                                // Send to Streamlit parent
-                                window.parent.postMessage({
-                                    type: 'streamlit:setComponentValue',
-                                    value: {
-                                        frame: base64Data,
-                                        count: frameCount
-                                    }
-                                }, '*');
-                            };
-                            reader.readAsDataURL(blob);
-                        }
-                    }, 'image/jpeg', 0.8);
-                }
-            }, 500);
-        }
-        </script>
-    </body>
-    </html>
-    """
-
 def process_video(model, video_path, progress_bar, status_text):
     """Process uploaded video with PPE detection"""
     cap = cv2.VideoCapture(video_path)
@@ -310,96 +137,162 @@ def main():
         st.subheader("Live PPE Detection")
         
         # Initialize session state
+        if 'live_active' not in st.session_state:
+            st.session_state.live_active = False
         if 'frames_processed' not in st.session_state:
             st.session_state.frames_processed = 0
-        if 'total_detections' not in st.session_state:
-            st.session_state.total_detections = 0
         if 'detection_summary' not in st.session_state:
             st.session_state.detection_summary = {}
         if 'last_frame' not in st.session_state:
             st.session_state.last_frame = None
+        if 'last_detections' not in st.session_state:
+            st.session_state.last_detections = []
+        
+        # Control buttons
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
+        
+        with col_btn1:
+            if st.button("🟢 Start Live", type="primary", key="start_live"):
+                st.session_state.live_active = True
+                st.success("Live detection started!")
+                st.rerun()
+        
+        with col_btn2:
+            if st.button("🔴 Stop & Save", key="stop_live"):
+                st.session_state.live_active = False
+                st.info("Detection stopped - Results saved!")
+        
+        with col_btn3:
+            if st.session_state.live_active:
+                st.success("🔴 LIVE - Auto-capturing every 2 seconds")
+            else:
+                st.info("⏸️ STOPPED")
         
         # Create layout
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            # Live webcam component
-            import streamlit.components.v1 as components
+            st.write("**Live Camera Feed**")
             
-            frame_data = components.html(
-                get_live_webcam_component(),
-                height=600,
-                scrolling=False
-            )
-            
-            # Process incoming frames
-            if frame_data and isinstance(frame_data, dict):
-                try:
-                    if 'frame' in frame_data:
-                        # Decode frame
-                        image_bytes = base64.b64decode(frame_data['frame'])
-                        image = Image.open(io.BytesIO(image_bytes))
-                        
-                        # Process with PPE detection
+            if st.session_state.live_active:
+                # Auto-refreshing camera for continuous detection
+                camera_key = f"live_camera_{int(time.time() / 2)}"  # New key every 2 seconds
+                
+                camera_photo = st.camera_input(
+                    "📷 Live Detection Active - Auto-capturing...",
+                    key=camera_key,
+                    help="Camera will automatically capture and process frames"
+                )
+                
+                if camera_photo is not None:
+                    # Process the captured frame
+                    image = Image.open(camera_photo)
+                    
+                    with st.spinner("Processing live frame..."):
                         processed_img, detections = process_image(model, image)
-                        
-                        # Update statistics
-                        st.session_state.frames_processed = frame_data.get('count', 0)
-                        st.session_state.last_frame = processed_img
-                        
-                        if detections:
-                            st.session_state.total_detections += len(detections)
+                    
+                    # Update session state
+                    st.session_state.frames_processed += 1
+                    st.session_state.last_frame = processed_img
+                    st.session_state.last_detections = detections
+                    
+                    # Update detection summary
+                    if detections:
+                        for box in detections:
+                            class_id = int(box.cls[0])
+                            class_name = model.names[class_id]
                             
-                            # Update detection summary
-                            for box in detections:
-                                class_id = int(box.cls[0])
-                                class_name = model.names[class_id]
-                                
-                                if class_name in st.session_state.detection_summary:
-                                    st.session_state.detection_summary[class_name] += 1
-                                else:
-                                    st.session_state.detection_summary[class_name] = 1
-                        
-                        # Display processed frame
-                        st.image(processed_img, caption=f"Frame {st.session_state.frames_processed}")
-                        
-                except Exception as e:
-                    st.error(f"Processing error: {e}")
+                            if class_name in st.session_state.detection_summary:
+                                st.session_state.detection_summary[class_name] += 1
+                            else:
+                                st.session_state.detection_summary[class_name] = 1
+                    
+                    # Display processed frame
+                    st.image(
+                        processed_img, 
+                        caption=f"🔴 LIVE Frame #{st.session_state.frames_processed}",
+                        use_column_width=True
+                    )
+                    
+                    # Auto-refresh for continuous effect
+                    time.sleep(0.5)
+                    st.rerun()
+                
+                else:
+                    st.info("📷 Waiting for camera - Click the camera button to start live detection")
+            
+            else:
+                # Show last captured frame when stopped
+                if st.session_state.last_frame is not None:
+                    st.image(
+                        st.session_state.last_frame,
+                        caption="Last Detection Frame (Saved)",
+                        use_column_width=True
+                    )
+                else:
+                    # Placeholder
+                    placeholder = np.full((400, 600, 3), 220, dtype=np.uint8)
+                    cv2.putText(placeholder, "Click 'Start Live' to begin", (150, 190), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
+                    cv2.putText(placeholder, "continuous PPE detection", (160, 230), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
+                    st.image(placeholder, use_column_width=True)
         
         with col2:
-            st.subheader("Detection Summary")
+            st.write("**Detection Results**")
             
-            # Statistics
+            # Current stats
             st.metric("Frames Processed", st.session_state.frames_processed)
-            st.metric("Total Detections", st.session_state.total_detections)
             
-            # Detection breakdown
+            # Current detections
+            if st.session_state.live_active and st.session_state.last_detections:
+                st.write("**Current Frame:**")
+                for box in st.session_state.last_detections:
+                    class_id = int(box.cls[0])
+                    class_name = model.names[class_id]
+                    confidence = float(box.conf[0])
+                    st.write(f"• {class_name}: {confidence:.2f}")
+            
+            # Detection summary
             if st.session_state.detection_summary:
-                st.write("**Detected Items:**")
+                st.write("---")
+                st.write("**Total Detected:**")
+                total_items = sum(st.session_state.detection_summary.values())
+                st.metric("Total PPE Items", total_items)
+                
                 for item, count in st.session_state.detection_summary.items():
-                    st.write(f"• {item}: {count}")
+                    st.write(f"• {item}: {count} times")
             else:
                 st.info("No detections yet")
             
-            # Download last frame
+            # Download and reset
             if st.session_state.last_frame is not None:
                 st.write("---")
+                
+                # Download button
                 img_bytes = io.BytesIO()
                 Image.fromarray(st.session_state.last_frame).save(img_bytes, format='PNG')
                 
                 st.download_button(
-                    label="Download Last Frame",
+                    label="📥 Download Last Frame",
                     data=img_bytes.getvalue(),
                     file_name=f"ppe_detection_{int(time.time())}.png",
                     mime="image/png"
                 )
             
             # Reset button
-            if st.button("Reset Statistics"):
+            if st.button("🔄 Reset All"):
                 st.session_state.frames_processed = 0
-                st.session_state.total_detections = 0
                 st.session_state.detection_summary = {}
+                st.session_state.last_frame = None
+                st.session_state.last_detections = []
+                st.session_state.live_active = False
+                st.success("Statistics reset!")
                 st.rerun()
+        
+        # Instructions
+        if st.session_state.live_active:
+            st.info("📹 **Live Mode Active:** Camera will auto-capture every 2 seconds for continuous PPE detection. Click 'Stop & Save' when finished.")
+        else:
+            st.info("▶️ **How to use:** Click 'Start Live' → Allow camera access → Camera will automatically capture and process frames continuously → Click 'Stop & Save' when done")
     
     elif mode == "Upload Image":
         st.subheader("Image PPE Detection")
