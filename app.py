@@ -83,16 +83,21 @@ if mode == "Upload Image":
     uploaded_file = st.file_uploader("Choose image", type=['png','jpg','jpeg'])
     if uploaded_file:
         image = Image.open(uploaded_file)
-        st.subheader("Original Image")
-        image_resized = image.resize((400, 400))
-        st.image(image_resized)
-
         with st.spinner("Processing image..."):
             annotated_img, detections = process_image(image)
 
-        st.subheader("Detection Results")
+        # Resize images for display
+        image_resized = image.resize((400, 400))
         annotated_resized = Image.fromarray(annotated_img).resize((400, 400))
-        st.image(annotated_resized)
+
+        # Side-by-side display
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Original Image")
+            st.image(image_resized)
+        with col2:
+            st.subheader("Detection Result")
+            st.image(annotated_resized)
 
         if detections:
             st.write(f"Detected {len(detections)} PPE items:")
@@ -111,15 +116,18 @@ elif mode == "Upload Video":
             tmp_file.write(uploaded_video.read())
             video_path = tmp_file.name
 
-        st.subheader("Original Video")
-        st.video(uploaded_video, start_time=0, format="video/mp4")
-
         if st.button("Process Video"):
             with st.spinner("Processing video..."):
                 output_path = process_video(video_path)
 
-            st.subheader("Processed Video")
-            st.video(output_path, start_time=0, format="video/mp4")
+            # Side-by-side layout
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Original Video")
+                st.video(uploaded_video, start_time=0)
+            with col2:
+                st.subheader("Processed Video")
+                st.video(output_path, start_time=0)
 
             with open(output_path, 'rb') as f:
                 st.download_button("Download Processed Video", data=f.read(), file_name="ppe_processed_video.mp4", mime="video/mp4")
